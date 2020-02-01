@@ -1,0 +1,654 @@
+---
+title: "Medical_No_Show_Data_EDA"
+author: "Team No Show (Chhavi Sharma, Prahasan Gadugu and Supriya Ayalur Balasubramanian)"
+date: "April 5, 2019"
+output: html_document
+---
+
+
+####Citation:
+https://medium.com/@williamkoehrsen/exploratory-data-analysis-with-r-f9d3a4eb6b16
+
+https://www.kaggle.com/yousuf28/medical-appointment-no-show-in-r/report
+
+https://www.kaggle.com/jph84562/data-exploration-and-visualization/report
+
+https://www.kaggle.com/cnjn22/exploratory-analysis-for-medical-appointment
+
+https://www.kaggle.com/skirmer/excavating-insights-in-medical-no-shows
+
+
+####Dataset Source:
+https://www.kaggle.com/joniarroba/noshowappointments/version/3
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+# Load the required packages.
+suppressMessages(library(ggpubr))
+suppressMessages(library(ggplot2))
+suppressMessages(library(plyr))
+suppressMessages(library(dplyr))
+suppressMessages(library(reshape2))
+suppressMessages(library(Hmisc))
+suppressMessages(library(GGally))
+suppressMessages(library(lubridate))
+suppressMessages(library(stringr))
+suppressMessages(library(scales))
+suppressMessages(library(corrplot))
+suppressMessages(library(GGally))
+suppressMessages(library(gridExtra))
+suppressMessages(library(grid))
+```
+
+
+
+## Reading the data
+
+```{r}
+no_show_df <- read.csv('No-show-Issue-Comma-300k.csv',header = TRUE)
+str(no_show_df)
+```
+
+
+
+## Data Preparation and Cleaning Phase:
+
+```{r}
+
+summary(no_show_df)
+#Age has got min as -2 and max as 113 need to go in depth, removing the negative ages.
+
+no_show_df <- filter(no_show_df, Age >= 0)
+
+#Awaiting time has been given which is further converted to waiting time by changing it into positive values.
+no_show_df$AwaitingTime = -(no_show_df$AwaitingTime)
+
+#Status variable is converted into Status _int with numeric labels 0 (for no show), 1(show up)
+no_show_df$Status_int <- factor(no_show_df$Status, levels=c("Show-Up", "No-Show"),labels = c(0, 1))
+
+
+#Appointment registration has been converted to ymd_hms format to extract the hour information.
+no_show_df$Status_int <- as.numeric(no_show_df$Status_int)
+no_show_df$AppointmentRegistration_ymd_hms = ymd_hms(no_show_df$AppointmentRegistration)
+no_show_df$ApointmentData <-gsub(pattern = "[A-Z]", replacement = " ",
+                                x = no_show_df$ApointmentData)
+no_show_df$AppointmentRegistration <- 
+  gsub(pattern = "[A-Z]", replacement = " ", 
+       x = no_show_df$AppointmentRegistration)
+no_show_df$ApointmentData <- as.Date(no_show_df$ApointmentData)
+no_show_df$AppointmentRegistration <- 
+  as.Date(no_show_df$AppointmentRegistration)
+
+
+#Appointment Date column has been modified by dividing it into year, month and day.
+no_show_df <-transform(no_show_df, month = format(ApointmentData, "%m"))
+no_show_df <- transform(no_show_df, year = format(ApointmentData, "%Y"))
+no_show_df <- transform(no_show_df, day = format(ApointmentData, "%d"))
+no_show_df$year <- as.integer(as.character(no_show_df$year))
+no_show_df$month <- as.integer(as.character(no_show_df$month))
+no_show_df$day <- as.integer(as.character(no_show_df$day))
+
+str(no_show_df)
+```
+
+#Correlation Matrix
+
+```{r fig.height= 7, fig.width= 5}
+mydata.cor = cor(no_show_df[,c("Status_int","Age", "Diabetes", "Alcoolism","Handcap",
+                             "HiperTension" , "Smokes", "Scholarship", 
+                             "Tuberculosis", "AwaitingTime", "month", "year", 
+                             "day","Sms_Reminder")])
+colnames(mydata.cor) <- c("STATUS","Age", "Diabetes", "Alcoholism","Handicap",
+                             "HyperTension" , "Smokes", "Scholarship", 
+                             "Tuberculosis", "Awaiting.Time", "Appointment.Month", "Appointment.Year", 
+                             "Appointment.Day","SMS.Reminder")
+gg_mat = ggcorr(mydata.cor,label=TRUE,hjust = 0.9, size = 3, color = "black", layout.exp = 2)+ labs(title = "Correlation Matrix", subtitle = "Determination of Correlation of Factors w.r.t \"Status\" variable")
+gg_mat
+```
+
+
+##Exploratory Data Analysis starts here:
+
+#Plot 1:
+#Absence rate vs Age:
+
+
+```{r}
+
+#Age behaviour
+
+no_shows_age_lessthan_90 = filter(no_show_df, Age<90)
+no_shows_by_age<-group_by(no_shows_age_lessthan_90, Age)
+no_shows_by_age <- dplyr::summarize(no_shows_by_age,
+                             absence_rate = mean(Status_int),
+                             n = n())
+
+#Scatter plot and trend
+ggplot(aes(x = Age, y = absence_rate-1), data = no_shows_by_age) + geom_smooth(method = "loess")+
+  geom_point(size = 1) +  labs(x = 'Age (years)', y = 'No-Show Rate %' , 
+                               title = 'No-show rate vs Age of Patient') +   scale_x_continuous(breaks=seq(0,100,5))
+
+
+#creating bins of Age and plotting the Absence rate vs Age bins:
+
+
+no_shows_by_age$age_bucket <- cut(no_shows_by_age$Age, 
+                                  breaks= seq(0,90, 5), include.lowest=TRUE)
+no_shows_by_age_bucket <- group_by(no_shows_by_age, age_bucket)
+no_shows_by_age_bucket <- dplyr::summarize(no_shows_by_age_bucket,
+                                           absence_rate = mean(absence_rate-1),
+                                           n = n())
+
+gg_age = ggplot(aes(x = age_bucket, y = 100*absence_rate), 
+       data= no_shows_by_age_bucket) + 
+  geom_bar(stat='identity', color='black', 
+           fill = 'orange', lwd = 0.8, width=1) + 
+  theme(axis.text.x=element_text(angle = 60, hjust=1)) + 
+  labs(x = 'Age Group', y = 'No-Show Rate in %', 
+       title = 'No-Show Rate vs Age Group') + 
+  scale_y_continuous(breaks=seq(-40, 40, 10))
+gg_age
+
+```
+
+#Plot 2:
+#No-show rate vs Waiting Time bins
+
+```{r}
+
+#Waiting time behaviour
+no_shows_by_wait <- group_by(no_show_df, AwaitingTime)
+no_shows_by_wait <- dplyr::summarize(no_shows_by_wait, 
+                                     absence_rate = mean(Status_int),
+                                     n = n())
+
+
+# No show rate vs age scatter plot.
+ggplot(aes(x = AwaitingTime, y = 100 * (absence_rate-1)), data = no_shows_by_wait) + 
+  geom_point(color='black') + geom_smooth(method = "loess")+
+  labs(x = 'Wait (days)' , y = 'No-show Rate %', 
+       title = 'No-show Rate vs Waiting Time')
+
+#Filtering out the ages less than 90 days
+no_shows_by_wait <- filter(no_shows_by_wait, AwaitingTime< 90)
+
+
+#Cutting the wait time into bins of 10 days each like the age.
+
+no_shows_by_wait$wait_bucket<-cut(no_shows_by_wait$AwaitingTime, 
+                                  breaks = seq(0,90,10),include.lowest = TRUE)
+
+no_shows_by_wait_bucket <- group_by(no_shows_by_wait, wait_bucket)
+no_shows_by_wait_bucket <- dplyr::summarize(no_shows_by_wait_bucket,
+                                           absence_rate = mean(absence_rate-1),
+                                           n = n())
+
+
+#Relative absence rate is calculated as the trend in the absolute absence rate is not significant.
+no_shows_by_wait_bucket$relative_absence_rate <- 
+  with(no_shows_by_wait_bucket, 
+       100 *(absence_rate - mean(absence_rate)) / mean(absence_rate))
+
+
+# Graph the relative absence rate for each age bucket
+gg_wait = ggplot(aes(x = wait_bucket, y = relative_absence_rate), 
+       data = no_shows_by_wait_bucket) + 
+  geom_bar(stat='identity', color='black',fill='darkgreen',lwd = 0.8, width = 1) + 
+  scale_y_continuous(breaks=seq(-20, 50, 5)) + 
+  labs(x = 'Wait Time Group (days)', y = 'Relative No-Show Rate in %', 
+       title = 'Relative No-Show Rate vs Waiting Time  Group')
+
+gg_wait
+
+```
+
+
+
+#Plot 3:
+#No show rate vs month
+
+```{r fig.width = 7, fig.height = 5}
+
+##Month plot 1:
+
+no_shows_by_month <- group_by(no_show_df, month)
+no_shows_by_month <- dplyr::summarize(no_shows_by_month,
+                                      absence_rate = mean(Status_int),
+                                      n = n())
+
+month_labels = c('Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul' ,'Aug', 'Sep', 
+                 'Oct', 'Nov' , 'Dec')
+no_shows_by_month$month_name <- month_labels
+no_shows_by_month$month_name <- 
+  factor(no_shows_by_month$month_name, 
+         levels=unique(no_shows_by_month$month_name))
+gg_month_line = ggplot(no_shows_by_month, aes(x = month_name, y = 100*(absence_rate-1))) + 
+  geom_point(color = 'red', size = 1.8) +
+  labs(x = 'Appointment Month', y = 'Absence Rate %', 
+       title='Absence Rate vs Appointment Month')+ 
+  geom_line(group =1, color = 'blue')
+gg_month_line
+no_shows_by_month <-
+no_show_df %>% 
+  group_by(month, Gender) %>% 
+  dplyr::count(Status)
+
+##Month plot 2
+
+no_shows_by_month <- tidyr::spread(no_shows_by_month, key = Status, value = n)
+
+colnames(no_shows_by_month) <- c("Month", "Gender", "Noshow", "Show")
+
+no_shows_by_month <-
+no_shows_by_month %>% 
+  mutate(Noshowrate = round(Noshow / (Noshow + Show), digits = 3))
+
+gg_month = no_shows_by_month %>%
+  group_by(Month) %>% 
+  summarise(Noshowrate = mean(Noshowrate)) %>%
+  ggplot(aes(x = Month, y = 100*Noshowrate)) +
+  geom_bar(stat = "identity", fill = "darkgreen") +
+  scale_x_discrete(limits = c(1, 2, 3, 4, 5, 6, 7,8,9,10,11,12),
+                   labels = c("Jan", "Feb", "Mar", "Apr", "May","Jun", "Jul", "Aug","Sep","Oct","Nov","Dec")) +
+  xlab("Month of the year") +
+  ylab("No-Show Rate in %") +
+  ggtitle("No-Show Rate Against month in a year") 
+
+gg_month
+
+
+```
+
+
+
+
+#Plot 4
+#No show rate by week day:
+
+```{r}
+no_show_byweekday <-
+no_show_df %>% 
+  group_by(DayOfTheWeek, Gender) %>% 
+  dplyr::count(Status)
+
+
+#Taking the information from week day counting the Staus and assigning to 
+no_show_byweekday <- tidyr::spread(no_show_byweekday, key = Status, value = n)
+
+colnames(no_show_byweekday) <- c("DayOfTheWeek", "Gender", "Noshow", "Show")
+no_show_byweekday <-
+no_show_byweekday %>% 
+  mutate(Noshowrate = round(Noshow / (Noshow + Show), digits = 3))
+no_show_byweekday$Gender <- factor(no_show_byweekday$Gender, levels = c("M", "F"))
+week_day = no_show_byweekday %>%
+  group_by(DayOfTheWeek) %>% 
+  summarise(Noshowrate = mean(Noshowrate))
+gg_week_day = ggplot(week_day, aes(x = DayOfTheWeek, y = 100*Noshowrate))+
+  geom_bar(stat = "identity", fill = "purple") +
+  scale_x_discrete(limits = c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"),
+                   labels = c("Mon", "Tues", "Wed", "Thurs", "Fri", "Sat", "Sun")) +
+  ggtitle("No-Show Rate Against Day of Week") + xlab("Day of the week")+ylab("No Show rate in %")
+gg_week_day
+  
+no_show_df$DayOfTheWeek <- factor(no_show_df$DayOfTheWeek,levels=c("Monday","Tuesday","Wednesday",
+                                                       "Thursday","Friday","Saturday","Sunday"))
+
+
+gg_imbal_weekday = ggplot(no_show_df,aes(x=DayOfTheWeek,fill=DayOfTheWeek))+
+  geom_bar(fill = "darkcyan")+xlab("Day of the week")+ylab("Count")+ggtitle("Count of Appointments vs Days of the week")
+
+gg_week_day_prop = ggplot(no_show_df, aes(x=DayOfTheWeek,fill=Status))+
+  geom_bar(stat="count",position="fill")+xlab("Day of the week")+ylab("Proportion of Show and No-Show")+ggtitle("Proportion of Show and No-show w.r.t days of the week")
+
+
+gg_dow = grid.arrange(gg_imbal_weekday,gg_week_day_prop)
+gg_dow
+```
+
+#Plot 5:
+#Absence rate vs Appointment day
+
+```{r fig.width = 10, fig.height = 6}
+no_shows_by_day <- group_by(no_show_df, day)
+no_shows_by_day <- dplyr::summarize(no_shows_by_day,
+                                    absence_rate = mean(Status_int),
+                                    n = n())
+gg_appt_day = ggplot(aes(x = day, y = 100*(absence_rate-1)), data = no_shows_by_day) + 
+  geom_point(color = 'red')  + labs(x = 'Day of Appointment', 
+                                    y = 'No-Show Rate in %',
+                                    title='No-Show Rate vs Appointment Day') +
+  scale_x_continuous(breaks=seq(1,31,1)) + geom_line(color='blue')+theme(axis.text.x=element_text(angle = 60, hjust=1))
+
+
+gg_appt_day
+```
+
+
+#Plot 6:
+#No-show Rate vs No.of SMS Reminders
+```{r}
+no_shows_by_sms <- group_by(no_show_df, Sms_Reminder)
+no_shows_by_sms <- dplyr::summarize(no_shows_by_sms, 
+                                    absence_rate = mean(Status_int),
+                                    n = n())
+gg_sms = ggplot(no_shows_by_sms,aes(x = Sms_Reminder, y = 100*(absence_rate-1))) + 
+  geom_bar(stat='identity', color='black', fill='peru') + 
+  labs(x = 'Number of SMS Reminders', y = 'No-show Rate %' , 
+       title = 'No-Show Rate vs  Number of \n SMS Reminders')+scale_y_continuous(breaks=seq(0, 40, 10))
+gg_sms
+
+
+gg_sms_prop = ggplot(no_show_df, aes(x=Sms_Reminder,fill=Status))+
+  geom_bar(stat="count",position="fill")+xlab("Number of SMS Reminders")+ylab("Proportion of Show and No-Show")+ggtitle("Proportion of Show and No-show \n w.r.t no.of SMS Reminders")
+gg_sms_prop
+
+
+gg_sms_prop = grid.arrange(gg_sms,gg_sms_prop,nrow =1)
+gg_sms_prop
+```
+
+
+#Plot 7:
+#Absence rate vs Age by Text Reminders
+
+```{r}
+no_show_df_avg <- filter(no_show_df, Age<90)
+ggplot(aes(x = Age, y = Sms_Reminder), data = no_show_df_avg) +
+  geom_line(stat='summary', fun.y = mean, color='darkblue') + 
+  labs(x = 'Age (years)', y = 'Number of SMS Reminders for each appointment', 
+       title='Average SMS Reminders vs Age' ) + 
+  scale_x_continuous(breaks= seq(0,90, 10))
+
+
+no_show_df_sms_01 <- filter(no_show_df, Sms_Reminder<2)
+no_shows_by_texts <- group_by(no_show_df_sms_01, Age)
+no_shows_by_texts <- filter(no_shows_by_texts, Age < 90)
+no_shows_by_texts$Sms_Reminder <- factor(no_shows_by_texts$Sms_Reminder)
+gg_age_sms = ggplot(aes(x = Age, y = 100*(Status_int-1) ), data = no_shows_by_texts) + 
+  geom_line(aes(color=Sms_Reminder), stat = 'summary', fun.y = mean, lwd = 1.2) + 
+  labs(x = 'Age (yrs)', y = 'Absence Rate %', 
+       title='Absence Rate vs Age by Text Reminders' ) + 
+  scale_color_manual(name='Number of SMS Reminders', 
+                     values=c('red','blue', 'slategray4'))
+
+gg_age_sms
+```
+
+
+#Plot 8:
+#No-show rate vs Reg_hour
+
+```{r fig.width= 5, fig.height = 7}
+
+
+no_show_by_hour <- group_by(no_show_df, RegistrationHour=hour(AppointmentRegistration_ymd_hms)) 
+
+no_show_by_hour<- dplyr::summarize(no_show_by_hour,absence_rate = mean(Status_int),
+                             n = n())
+gg_reghour = ggplot(no_show_by_hour, aes(x=RegistrationHour, y=100*(absence_rate-1))) + geom_bar(stat="identity",fill="brown") + scale_fill_discrete("Registration Hour")+xlab("Registration Hour")+ylab("Absence Rate in %")+ggtitle("Absence Rate vs Registration hour in a day")
+
+ggplot(no_show_df, aes(x=hour(AppointmentRegistration_ymd_hms),fill=Status))+
+  geom_bar(stat="count",position="fill")+xlab("Registration Hour")+ylab("Proportion of Show and No-Show")+ggtitle("Proportion of Show and No-show \n w.r.t Registration hour in a day")
+
+ggplot(no_show_df, aes(x=hour(AppointmentRegistration_ymd_hms),fill=hour(AppointmentRegistration_ymd_hms)))+
+  geom_histogram(fill = "black", binwidth = 0.5)+xlab("Registration Hour")+ylab("Count of Appointments")+ggtitle("Count of Appointments \n w.r.t Registration hour in a day")
+gg_reghour
+
+
+no_show_df$appt_hr_bucket <- cut(hour(no_show_df$AppointmentRegistration_ymd_hms), 
+                                  breaks= seq(0,30,5), include.lowest=TRUE)
+no_shows_by_appt_hr_bucket <- group_by(no_show_df, appt_hr_bucket)
+no_shows_by_appt_hr_bucket <- dplyr::summarize(no_shows_by_appt_hr_bucket,
+                                           absence_rate = mean(Status_int),
+                                           n = n())
+
+gg_apptr_bins = ggplot(aes(x = appt_hr_bucket, y = 100*(absence_rate-1)), 
+       data= no_shows_by_appt_hr_bucket) + 
+  geom_bar(stat='identity', color='black', 
+           fill = 'orange', lwd = 0.8, width=1) + 
+  theme(axis.text.x=element_text(angle = 60, hjust=1)) + 
+  labs(x = 'Registration Hour', y = 'No-Show Rate in %', 
+       title = 'No-Show Rate vs Appointment Registration \n hour Group') 
+
+
+gg_count_rehour = ggplot(no_show_df, aes(appt_hr_bucket))+
+  geom_bar(fill = "purple")+xlab("Registration hour")+ylab("Count")+ggtitle("Count of appointments \n w.r.t Registration hour in a day")
+
+gg_prop_rehour = ggplot(no_show_df, aes(x=appt_hr_bucket,fill=Status))+
+  geom_bar(stat="count",position="fill")+xlab("Registration hour")+ylab("Proportion of \n Show and No-Show")+ggtitle("Proportion of Show and No-show \n w.r.t Registration hour in a day")
+
+
+gg_apptr_bins
+gg_count_rehour
+gg_prop_rehour
+
+
+grid.arrange(gg_count_rehour,gg_prop_rehour,ncol = 1)
+
+```
+
+
+
+
+#Plot 9
+#Slide 9: Seasonal and holiday wise behaviour
+
+
+```{r}
+#This cell takes time please be patient:
+#Seasonal Behaviour
+#Particular Date
+
+# First plot for 2014
+
+no_show_df_2014 = no_show_df[which(no_show_df$year == 2014),]
+no_show_df_2015 = no_show_df[which(no_show_df$year == 2015),]
+plot1 <-  ggplot(no_show_df_2014, aes(x = ApointmentData, y = (100*Status_int)-100)) +
+  geom_point(aes(color = Gender),stat = 'summary', fun.y = mean)+
+  labs(x = 'Appt. Date (M-D)', y = 'Absence Rate %',
+       title = 'Absence Rate vs. Day of Year 2014') + 
+  scale_x_date(date_breaks = "1 month", date_labels = "%m-%d") + 
+  theme(axis.text.x  =element_text(angle = 70, hjust = 1))+geom_vline(aes(xintercept=(as.numeric(as.Date("2014-12-25")))), 
+             linetype = 2, color = 'brown') + 
+  geom_text(aes(x=(as.Date("2014-12-25")), y= 60, label='Christmas'),
+            size=3, angle=90, vjust=-0.4, hjust=0)+geom_vline(aes(xintercept=(as.numeric(as.Date("2014-08-01")))), 
+             linetype = 2, color = 'brown') + 
+  geom_text(aes(x=(as.Date("2014-08-01")), y= 60, label='Fall'),
+            size=3, angle=90, vjust=-0.4, hjust=0)+geom_vline(aes(xintercept=(as.numeric(as.Date("2014-05-01")))), 
+             linetype = 2, color = 'brown') + 
+  geom_text(aes(x=(as.Date("2014-05-01")), y= 60, label='Summer'),
+            size=3, angle=90, vjust=-0.4, hjust=0)+geom_vline(aes(xintercept=(as.numeric(as.Date("2014-03-01")))), 
+             linetype = 2, color = 'brown') + 
+  geom_text(aes(x=(as.Date("2014-03-01")), y= 60, label='Spring'),
+            size=3, angle=90, vjust=-0.4, hjust=0)+geom_vline(aes(xintercept=(as.numeric(as.Date("2014-11-15")))), 
+             linetype = 2, color = 'brown') + 
+  geom_text(aes(x=(as.Date("2014-11-15")), y= 60, label='Thanksgiving and Winter'),
+            size=3, angle=90, vjust=-0.4, hjust=0)
+  
+# Second plot for 2015
+plot2 <- ggplot(no_show_df_2015, aes(x = ApointmentData, y = (100*Status_int)-100)) + 
+  geom_point(aes(color = Gender),stat = 'summary', fun.y = mean)  + 
+  labs(x = 'Appt. Date (M-D)', y = 'Absence Rate %', 
+       title = 'Absence Rate vs. Day of Year 2015') +
+  scale_x_date(date_breaks = "1 month", date_labels = "%m-%d") + 
+  theme(axis.text.x  =element_text(angle = 70, hjust = 1))+geom_vline(aes(xintercept=(as.numeric(as.Date("2015-12-25")))), 
+             linetype = 2, color = 'brown') + 
+  geom_text(aes(x=(as.Date("2015-12-25")), y= 60, label='Christmas'),
+            size=3, angle=90, vjust=-0.4, hjust=0)+geom_vline(aes(xintercept=(as.numeric(as.Date("2015-08-01")))), 
+             linetype = 2, color = 'brown') + 
+  geom_text(aes(x=(as.Date("2015-08-01")), y= 60, label='Fall'),
+            size=3, angle=90, vjust=-0.4, hjust=0)+geom_vline(aes(xintercept=(as.numeric(as.Date("2015-05-01")))), 
+             linetype = 2, color = 'brown') + 
+  geom_text(aes(x=(as.Date("2015-05-01")), y= 60, label='Summer'),
+            size=3, angle=90, vjust=-0.4, hjust=0)+geom_vline(aes(xintercept=(as.numeric(as.Date("2015-03-01")))), 
+             linetype = 2, color = 'brown') + 
+  geom_text(aes(x=(as.Date("2015-03-01")), y= 60, label='Spring'),
+            size=3, angle=90, vjust=-0.4, hjust=0)+geom_vline(aes(xintercept=(as.numeric(as.Date("2015-11-15")))), 
+             linetype = 2, color = 'brown') + 
+  geom_text(aes(x=(as.Date("2015-11-15")), y= 60, label='Thanksgiving and Winter'),
+            size=3, angle=90, vjust=-0.4, hjust=0)
+
+```
+
+
+```{r fig.width=14, fig.height=7}
+#This cell takes time please be patient:
+gg_dob = grid.arrange(plot1, plot2, nrow = 1)
+gg_dob
+```
+
+
+#Plot 10:
+#Behavioral patterns in patients count:
+
+```{r fig.width=5,fig.height=7}
+pl1 <- ggplot(no_show_df)+geom_bar(aes(Scholarship, fill = Scholarship))+ylab('Count')+xlab("Scholarship")+scale_x_discrete(limits = c(0,1),labels = c("No","Yes"))+scale_y_continuous(limits = c(0,300000),label = unit_format(unit = "K", scale =1e-3))
+pl2 <- ggplot(no_show_df)+geom_bar(aes(HiperTension, fill =HiperTension))+
+    ylab('Count')+xlab("HyperTension")+scale_x_discrete(limits = c(0,1),labels = c("No","Yes"))+scale_y_continuous(limits = c(0,300000),label = unit_format(unit = "K", scale =1e-3))
+pl3 <- ggplot(no_show_df)+geom_bar(aes(Diabetes, fill = Diabetes))+
+    ylab('Count')+xlab("Diabetes")+scale_x_discrete(limits = c(0,1),labels = c("No","Yes"))+scale_y_continuous(limits = c(0,300000),label = unit_format(unit = "K", scale =1e-3))
+pl4 <- ggplot(no_show_df)+geom_bar(aes (Alcoolism, fill =  Alcoolism))+
+    ylab('Count')+xlab("Alcoholism")+scale_x_discrete(limits = c(0,1),labels = c("No","Yes"))+scale_y_continuous(limits = c(0,300000),label = unit_format(unit = "K", scale =1e-3))
+pl5 <- ggplot(no_show_df)+geom_bar(aes( Handcap, fill = Handcap))+
+    ylab('Count')+xlab("Handicap")+scale_x_discrete(limits = c(0,1,2,3,4))+scale_y_continuous(limits = c(0,300000),label = unit_format(unit = "K", scale =1e-3))
+pl6 <- ggplot(no_show_df)+geom_bar(aes(Sms_Reminder, fill = Sms_Reminder))+
+    ylab('Count')+xlab("Sms_Reminder")+scale_y_continuous(limits = c(0,300000),label = unit_format(unit = "K", scale =1e-3))
+pl7 <- ggplot(no_show_df)+geom_bar(aes(Smokes, fill = Smokes))+
+    ylab('Count')+xlab("Smokes")+scale_x_discrete(limits = c(0,1),labels = c("No","Yes"))+scale_y_continuous(limits = c(0,300000),label = unit_format(unit = "K", scale =1e-3))
+pl8 <- ggplot(no_show_df)+geom_bar(aes(Tuberculosis, fill = Tuberculosis))+
+    ylab('Count')+xlab("Tuberculosis")+scale_x_discrete(limits = c(0,1),labels = c("No","Yes"))+scale_y_continuous(limits = c(0,300000),label = unit_format(unit = "K", scale =1e-3))
+
+fig = ggarrange(pl1,pl2,pl3,pl4,pl5,pl6,pl7,pl8, nrow = 4,ncol =2)
+gg_ptmarkers = annotate_figure(fig, top = text_grob("Number of Patients in each marker", color = "black", size = 13))
+gg_ptmarkers
+```
+
+#Plot 11:
+#Behavioral patterns in patients proportion:
+
+
+```{r fig.width=5,fig.height=7}
+#str(no_show_df)
+p1 <- ggplot(no_show_df)+geom_bar(aes(Scholarship, fill = Status), position = position_fill())+
+    ylab('Proportion')+scale_x_discrete(limits = c(0,1),labels = c("No","Yes"))+xlab("Scholarship")+theme(legend.position="none")
+p2 <- ggplot(no_show_df)+geom_bar(aes(HiperTension, fill =Status), position = position_fill())+
+    ylab('Proportion')+scale_x_discrete(limits = c(0,1),labels = c("No","Yes"))+xlab("HyperTension")+theme(legend.position="none")
+p3 <- ggplot(no_show_df)+geom_bar(aes(Diabetes, fill = Status), position = position_fill())+
+    ylab('Proportion')+scale_x_discrete(limits = c(0,1),labels = c("No","Yes"))+xlab("Diabetes")+theme(legend.position="none")
+p4 <- ggplot(no_show_df)+geom_bar(aes (Alcoolism, fill =  Status), position = position_fill())+
+    ylab('Proportion')+scale_x_discrete(limits = c(0,1),labels = c("No","Yes"))+xlab("Alcoholism")+theme(legend.position="none")
+p5 <- ggplot(no_show_df)+geom_bar(aes( Handcap, fill = Status), position = position_fill())+
+    ylab('Proportion')+xlab("Handicap")+theme(legend.position="none")
+p6 <- ggplot(no_show_df)+geom_bar(aes(Sms_Reminder, fill = Status), position = position_fill())+
+    ylab('Proportion')+xlab("Sms_Reminder")+theme(legend.position="none")
+p7 <- ggplot(no_show_df)+geom_bar(aes( Smokes, fill = Status), position = position_fill())+
+    ylab('Proportion')+scale_x_discrete(limits = c(0,1),labels = c("No","Yes"))+xlab("Smokes")+theme(legend.position="none")
+p8 <- ggplot(no_show_df)+geom_bar(aes( Tuberculosis, fill = Status), position = position_fill())+
+    ylab('Proportion')+scale_x_discrete(limits = c(0,1),labels = c("No","Yes"))+xlab("Tuberculosis")
+
+
+#ggarrange(p1,p2,p3,p4,p5,p6,p7,p8, nrow = 4, ncol=2, common.legend = TRUE, legend="bottom")+ggtitle("Behavioral Patterns in Patients")
+
+
+figure <- ggarrange(p1,p2,p3,p4,p5,p6,p7,p8, nrow = 4, ncol=2, common.legend = TRUE, legend="right")
+
+# Annotate the figure by adding a common labels
+gg_ptmarkers_prop = annotate_figure(figure, top = text_grob("Behavioral Patterns in Patients", color = "black", size = 13))
+gg_ptmarkers_prop
+
+
+```
+
+
+
+
+#Plot 12 Imbalance in data:
+#No show and show 
+```{r}
+
+gg_imbalance = ggplot(data = no_show_df)+
+    geom_bar(aes(x = Status,fill = Status))+
+    ggtitle("Imbalance in Status variable")
+gg_imbalance
+
+```
+
+
+#Plot 13:
+#Gender plot
+
+
+```{r}
+
+##Gender plot:
+
+no_shows_by_gender <- group_by(no_show_df, Gender)
+no_shows_by_gender <- dplyr::summarize(no_shows_by_gender,
+                                      absence_rate = mean(Status_int),
+                                      n = n())
+
+gender_labels = c('Male', 'Female')
+no_shows_by_gender$gender_name <- gender_labels
+no_shows_by_gender$gender_name <- 
+  factor(no_shows_by_gender$gender_name, 
+         levels=unique(no_shows_by_gender$gender_name))
+
+gg_gender = ggplot(no_shows_by_gender, aes(x = gender_name, y = 100*(absence_rate-1))) + 
+  geom_bar(stat = "identity",width = 0.5,fill = "blue" )  + 
+  labs(x = 'Gender', y = 'Absence Rate %', 
+       title='Absence Rate vs Gender') 
+
+gg_gender
+
+
+gg_gen_imb = ggplot(data = no_show_df)+
+    geom_bar(aes(x = Gender,fill = Gender))+
+    ggtitle("Imbalance in gender variable")
+
+gg_gen_imb
+```
+
+
+
+#----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------#
+
+##Research Questionnaire:
+
+## Q1: What factors are most likely to determine whether a patient shows up to their scheduled doctor's appointment?
+
+```{r fig.width=5,fig.height=7}
+gg_mat
+gg_age
+gg_wait
+gg_month_line
+gg_dow
+gg_appt_day
+gg_sms_prop
+gg_age_sms
+gg_dob
+
+```
+
+
+## Q2: How is the absence/no-show to a scheduled appointment dependent on the general characteristics and behavior patterns of the patient?
+
+
+```{r fig.width=5,fig.height=7}
+
+gg_ptmarkers
+gg_ptmarkers_prop
+
+```
+
+## Q3: Can we predict whether a patient would show up or not by taking the aforementioned variables as explanatory variables into consideration?
+
+```{r fig.width=5,fig.height=7}
+gg_imbalance
+
+```
+
+
+## The third question has been entirely dealt in the "pred_eda_proj.Rmd" file
+

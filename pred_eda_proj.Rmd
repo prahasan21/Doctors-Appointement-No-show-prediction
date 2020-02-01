@@ -1,0 +1,266 @@
+---
+title: "Feature Engineering and Predictive Modeling"
+author: "Team No Show (Chhavi Sharma, Prahasan Gadugu and Supriya Ayalur Balasubramanian)"
+date: "April 11, 2019"
+output: html_document
+---
+
+
+####Citation:
+
+https://www.kaggle.com/kchandrasekhar/predict-with-logistic-regression-algorithm
+
+
+## Q3: Can we predict whether a patient would show up or not by taking the aforementioned variables as explanatory variables into consideration?
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+```{r}
+suppressMessages(library(ggplot2))
+suppressMessages(library(readr))
+suppressMessages(library(caret))
+suppressMessages(library(dplyr))
+suppressMessages(library(MASS))
+```
+
+
+#Removing the Appointment and Registration date as they are not contributing much towards the trends.
+
+```{r}
+no_shows_df <- read.csv("No-show-Issue-Comma-300k.csv", stringsAsFactors = TRUE)
+str(no_shows_df)
+no_shows_df.Status <- no_shows_df$Status
+no_shows_df <- no_shows_df[,-c(3,4)]
+str(no_shows_df)
+```
+
+
+
+#Cleaning the data for building the model
+```{r}
+no_shows_df <- filter(no_shows_df, Age >= 0)
+
+#no_shows_by_age$age_bucket <- cut(no_shows_by_age$Age,breaks= seq(0,90, 5), include.lowest=TRUE)
+
+
+no_shows_df$AwaitingTime = -(no_shows_df$AwaitingTime)
+#no_shows_df$age_bin <- cut(no_shows_df$Age, breaks = quantile(no_shows_df$Age, probs = seq(0,1,1/4)), include.lowest = TRUE)
+no_shows_df = filter(no_shows_df, Age<90)
+no_shows_by_age<-group_by(no_shows_df, Age)
+no_shows_df$age_bin <- cut(no_shows_by_age$Age,breaks= seq(0,90,5), include.lowest=TRUE)
+no_shows_df$age_bin <- as.factor(no_shows_df$age_bin)
+
+no_shows_df<-no_shows_df[,-c(1)]
+no_shows_df[sapply(no_shows_df, is.numeric)] <- lapply(no_shows_df[sapply(no_shows_df, is.numeric)],as.factor)
+no_shows_df$AwaitingTime<-as.numeric(no_shows_df$AwaitingTime)
+
+no_show_dummy <- no_shows_df
+noshowdummies <- dummyVars(~.,data = no_show_dummy, levelsOnly = FALSE)
+no_show_dummy <-as.data.frame(predict(noshowdummies, newdata = no_show_dummy))
+no_show_dummy$Status<-no_shows_df$Status
+no_show_dummy<-no_show_dummy[,-c(10,11)]
+no_show_dummy <-na.omit(no_show_dummy)
+```
+
+##Partitioning the data into Train and Test set for evaluation:
+
+```{r}
+set.seed(100)
+data_partition <-createDataPartition(no_show_dummy$Status,p=0.75,list=FALSE)
+no_show_train <-no_show_dummy[data_partition,]
+no_show_valid <-no_show_dummy[-data_partition,]
+no_show_train_status <- no_show_train$Status
+no_show_valid_status<-no_show_valid$Status
+
+```
+
+```{r fig.width=5,fig.height=5, warning=FALSE}
+
+Model.1 <- glm(Status~., data = no_show_train, family = binomial("logit"))
+summary(Model.1)
+```
+
+#Model.1 prediction results
+
+```{r warning= FALSE}
+
+#Hyper parameter tuning the threshold probability variable
+valid_set_probs = predict(Model.1,no_show_valid,type = "response")
+x = c(0.4,0.45,0.5,0.55,0.6,0.65,0.7)
+vector = c()
+cms = c()
+for(val in x){
+no_show_valid$prediction_val<-ifelse(valid_set_probs<val,"No-Show","Show-Up")
+no_show_valid$prediction_val <-as.factor(no_show_valid$prediction_val)
+ConMatrix <-table(no_show_valid_status,no_show_valid$prediction_val)
+print(ConMatrix)
+acc = (sum(diag(ConMatrix))/sum(ConMatrix))*100
+print(paste("Accuracy is",acc))
+print(paste("Probability is",val))
+vector <- c(vector, acc)
+}
+
+data.frame(x,vector) %>% ggplot(aes(x = x,y= vector ))+geom_point(color = "red")+geom_line(color = "blue")+xlab("Threshold probabilities")+ylab("Accuracies")+ggtitle("Accuracies vs Threshold probabilities for Model 1")
+
+```
+
+
+
+## Final Model 1
+```{r warning=FALSE}
+#Final Model 1
+print(paste("The final confusion matrix after the hyper parameter tuning Model 1:"))
+no_show_valid$prediction<-ifelse(valid_set_probs<0.6,"No-Show","Show-Up")
+no_show_valid$prediction <-as.factor(no_show_valid$prediction)
+ConfMatrix <-table(no_show_valid_status,no_show_valid$prediction)
+ConfMatrix
+print(paste("The final test accuracy is ",(sum(diag(ConfMatrix))/sum(ConfMatrix))*100,"%"))
+
+```
+
+
+
+
+```{r warning=FALSE}
+library(pROC)
+preds_1=predict(Model.1,no_show_valid, type="response")
+roc1=roc(no_show_valid_status ~ preds_1)
+plot(roc1, main = "Model 1 ROC plot")
+
+```
+
+
+#Model 2 is made based on the important features from the summary of the Model 1
+
+```{r warning=FALSE}
+no_show_train<-no_show_train[,-c(2,3,6,7,8,9,10,11,13,14,15,16,17,18,19,20,22,24,25,26,27,28,29,40,41,42,43,44,47,48,49)]
+Model.2 <- glm(no_show_train_status~., data = no_show_train, family = binomial("logit"))
+summary(Model.2)
+```
+
+
+
+#Model 2: Predictions and Hyperparameter tuning:
+
+```{r warning=FALSE}
+
+
+#Hyper parameter tuning the threshold probability variable
+valid_set_probs = predict(Model.2,no_show_valid,type = "response")
+x.2 = c(0.4,0.45,0.5,0.55,0.6,0.65,0.7)
+vector.2 = c()
+for(val in x.2){
+no_show_valid$prediction_val_2<-ifelse(valid_set_probs<val,"No-Show","Show-Up")
+no_show_valid$prediction_val_2 <-as.factor(no_show_valid$prediction_val_2)
+ConMatrix <-table(no_show_valid_status,no_show_valid$prediction_val_2)
+print(ConMatrix)
+acc.2 = (sum(diag(ConMatrix))/sum(ConMatrix))*100
+print(paste("Accuracy is",acc.2))
+print(paste("Probability is",val))
+vector.2 <- c(vector.2, acc.2)
+}
+
+data.frame(x.2,vector.2) %>% ggplot(aes(x = x.2,y= vector.2 ))+geom_point(color = "red")+geom_line(color = "blue")+xlab("Threshold probabilities")+ylab("Accuracies")+ggtitle("Accuracies vs Threshold probabilities for Model 1")
+
+
+
+
+
+```
+
+## Final Model 2
+
+```{r warning=FALSE}
+
+#Final Model 2
+print(paste("The final confusion matrix after the hyper parameter tuning Model 2:"))
+no_show_valid$prediction_2<-ifelse(valid_set_probs<0.6,"No-Show","Show-Up")
+no_show_valid$prediction_2 <-as.factor(no_show_valid$prediction_2)
+ConfMatrix.2 <-table(no_show_valid_status,no_show_valid$prediction_2)
+ConfMatrix.2
+print(paste("The final test accuracy is ",(sum(diag(ConfMatrix.2))/sum(ConfMatrix.2))*100,"%"))
+
+```
+
+
+
+
+
+```{r warning=FALSE}
+library(pROC)
+preds_2=predict(Model.2,no_show_valid, type="response")
+roc2=roc(no_show_valid_status ~ preds_2)
+plot(roc2, main = "Model 2 ROC plot")
+```
+
+
+#Balancing the data:
+
+```{r warning=FALSE}
+set.seed(100)
+showup_data <-filter(no_show_dummy, Status == 'Show-Up')
+summary(showup_data$Status)
+no_showup_data <- filter(no_show_dummy, Status == 'No-Show')
+summary(no_showup_data$Status)
+show_up_50 <- showup_data %>% sample_frac(.5)
+summary(show_up_50$Status)
+balanced_no_show_data = rbind(show_up_50,no_showup_data)
+gg_imbalance = ggplot(data = balanced_no_show_data)+
+    geom_bar(aes(x = Status,fill = Status))+
+    ggtitle("Balance in Status variable")
+gg_imbalance
+
+```
+
+
+
+#Dividing into train and test set for the balanced data:
+
+
+```{r warning=FALSE}
+set.seed(100)
+data_partition <-createDataPartition(balanced_no_show_data$Status,p=0.75,list=FALSE)
+no_show_train_bal <-balanced_no_show_data[data_partition,]
+no_show_valid_bal <-balanced_no_show_data[-data_partition,]
+no_show_train_status_bal <- no_show_train_bal$Status
+no_show_valid_status_bal <-no_show_valid_bal$Status
+
+```
+
+
+
+
+#Model 3 with all the features for the balanced data:
+
+```{r warning=FALSE}
+Model.3 <- glm(Status~., data = no_show_train_bal, family = binomial("logit"))
+summary(Model.3)
+```
+
+
+
+
+
+```{r warning=FALSE}
+valid_set_probs_bal = predict(Model.3,no_show_valid_bal,type = "response")
+no_show_valid_bal$prediction<-ifelse(valid_set_probs_bal<0.65,"No-Show","Show-Up")
+no_show_valid_bal$prediction <-as.factor(no_show_valid_bal$prediction)
+ConfMatrix <-table(no_show_valid_bal$Status,no_show_valid_bal$prediction)
+
+```
+
+## Final Model 3
+```{r}
+
+print(paste("Confusion matrix for Balanced data model(Model 3)"))
+ConfMatrix
+print(paste("The test accuracy for the balanced data is ",(sum(diag(ConfMatrix))/sum(ConfMatrix))*100,"%"))
+
+```
+
+## Therefore, since Model 2 gives the best accuracy(68.84%) by taking all significant features into account, it can be concluded as the best for predicting the show-up and no-show rates (Refer Documentation Appendix for ROC Curve Comparison).
